@@ -145,8 +145,10 @@ app.use(session({
     saveUninitialized: false,
     cookie: { 
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000
-    }
+        maxAge: 24 * 60 * 60 * 1000,
+        sameSite: 'lax'
+    },
+    name: 'readingHub.sid'
 }));
 
 // Flash messages middleware
@@ -185,6 +187,15 @@ app.get('/files/:filename', async (req, res) => {
 // Routes
 app.use('/books', bookRoutes);
 app.use('/shelves', shelfRoutes);
+
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
+});
 
 // Home route
 app.get('/', (req, res) => {

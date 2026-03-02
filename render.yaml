@@ -2,8 +2,10 @@ services:
   - type: web
     name: reading-hub
     runtime: node
+    plan: free
     buildCommand: rm -rf node_modules package-lock.json && npm install --legacy-peer-deps
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -13,3 +15,5 @@ services:
         generateValue: true
       - key: DELETE_PASSWORD
         sync: false
+      - key: PORT
+        value: 10000
