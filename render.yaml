@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: reading-hub
+    runtime: node
+    buildCommand: npm install --legacy-peer-deps
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DELETE_PASSWORD
+        sync: false

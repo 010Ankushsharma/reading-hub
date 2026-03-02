@@ -63,7 +63,7 @@
                                 <% if (book.coverImage.startsWith('http')) { %>
                                     <img src="<%= book.coverImage %>" alt="<%= book.title %>">
                                 <% } else { %>
-                                    <img src="/files/<%= book.coverImage %>" alt="<%= book.title %>">
+                                    <img src="<%= book.coverImage %>" alt="<%= book.title %>">
                                 <% } %>
                             <% } else { %>
                                 <div class="book-cover-placeholder">

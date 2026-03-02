@@ -4,38 +4,9 @@
  */
 const express = require('express');
 const router = express.Router();
-const path = require('path');
 const { body, validationResult } = require('express-validator');
-const multer = require('multer');
-const mongoose = require('mongoose');
 const Book = require('../models/Book');
 const Shelf = require('../models/Shelf');
-
-// Get GridFS bucket from app locals
-const getGfs = (req) => req.app.locals.gridfsBucket();
-const getGfsFiles = async (req, filename) => {
-    const conn = mongoose.connection;
-    return await conn.db.collection('uploads.files').findOne({ filename });
-};
-
-// File filter to accept only PDFs and images
-const fileFilter = (req, file, cb) => {
-    if (file.fieldname === 'pdfFile') {
-        if (file.mimetype === 'application/pdf') {
-            cb(null, true);
-        } else {
-            cb(new Error('Only PDF files are allowed!'), false);
-        }
-    } else if (file.fieldname === 'coverImageFile') {
-        if (file.mimetype.startsWith('image/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Only image files are allowed for cover!'), false);
-        }
-    } else {
-        cb(null, true);
-    }
-};
 
 // Validation rules
 const bookValidation = [
@@ -73,7 +44,6 @@ router.get('/', async (req, res) => {
 
         let query = {};
         
-        // Search functionality
         if (search) {
             query = {
                 $or: [
@@ -84,11 +54,9 @@ router.get('/', async (req, res) => {
             };
         }
 
-        // Get total count for pagination
         const totalBooks = await Book.countDocuments(query);
         const totalPages = Math.ceil(totalBooks / limit);
 
-        // Get books with pagination
         const books = await Book.find(query)
             .sort({ createdAt: -1 })
             .skip(skip)
@@ -154,8 +122,7 @@ router.get('/new', async (req, res) => {
  */
 router.post('/', 
     (req, res, next) => {
-        const upload = req.app.locals.upload;
-        upload.fields([
+        req.app.locals.upload.fields([
             { name: 'pdfFile', maxCount: 1 },
             { name: 'coverImageFile', maxCount: 1 }
         ])(req, res, next);
@@ -163,7 +130,6 @@ router.post('/',
     bookValidation,
     async (req, res) => {
         try {
-            // Check validation errors
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
                 const shelves = await Shelf.find().sort({ name: 1 });
@@ -175,7 +141,6 @@ router.post('/',
                 });
             }
 
-            // Check if PDF file was uploaded
             if (!req.files || !req.files.pdfFile) {
                 const shelves = await Shelf.find().sort({ name: 1 });
                 return res.render('books/new', {
@@ -186,7 +151,6 @@ router.post('/',
                 });
             }
 
-            // Create new book
             const bookData = {
                 title: req.body.title,
                 author: req.body.author,
@@ -196,9 +160,8 @@ router.post('/',
                 shelf: req.body.shelf || null
             };
 
-            // Handle cover image (URL or uploaded file)
             if (req.files.coverImageFile && req.files.coverImageFile[0]) {
-                bookData.coverImage = req.files.coverImageFile[0].filename;
+                bookData.coverImage = '/files/' + req.files.coverImageFile[0].filename;
             } else if (req.body.coverImage) {
                 bookData.coverImage = req.body.coverImage;
             }
@@ -270,8 +233,7 @@ router.get('/:id/edit', async (req, res) => {
  */
 router.put('/:id',
     (req, res, next) => {
-        const upload = req.app.locals.upload;
-        upload.fields([
+        req.app.locals.upload.fields([
             { name: 'pdfFile', maxCount: 1 },
             { name: 'coverImageFile', maxCount: 1 }
         ])(req, res, next);
@@ -286,7 +248,6 @@ router.put('/:id',
                 return res.redirect('/books');
             }
 
-            // Check validation errors
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
                 const shelves = await Shelf.find().sort({ name: 1 });
@@ -298,41 +259,31 @@ router.put('/:id',
                 });
             }
 
-            // Update book data
+            const gfs = req.app.locals.gfs();
+
             book.title = req.body.title;
             book.author = req.body.author;
             book.description = req.body.description;
             book.genre = req.body.genre;
             book.shelf = req.body.shelf || null;
 
-            // Handle cover image update
             if (req.files.coverImageFile && req.files.coverImageFile[0]) {
-                // Delete old cover from GridFS if exists
-                if (book.coverImage && !book.coverImage.startsWith('http')) {
-                    try {
-                        const oldFile = await getGfsFiles(req, book.coverImage);
-                        if (oldFile) {
-                            await getGfs(req).delete(oldFile._id);
-                        }
-                    } catch (err) {
-                        console.error('Error deleting old cover:', err);
+                if (book.coverImage && book.coverImage.startsWith('/files/')) {
+                    const oldFilename = book.coverImage.replace('/files/', '');
+                    const oldFile = await mongoose.connection.db.collection('uploads.files').findOne({ filename: oldFilename });
+                    if (oldFile) {
+                        await gfs.delete(oldFile._id);
                     }
                 }
-                book.coverImage = req.files.coverImageFile[0].filename;
+                book.coverImage = '/files/' + req.files.coverImageFile[0].filename;
             } else if (req.body.coverImage) {
                 book.coverImage = req.body.coverImage;
             }
 
-            // Handle PDF file update
             if (req.files.pdfFile && req.files.pdfFile[0]) {
-                // Delete old PDF from GridFS
-                try {
-                    const oldFile = await getGfsFiles(req, book.pdfFile);
-                    if (oldFile) {
-                        await getGfs(req).delete(oldFile._id);
-                    }
-                } catch (err) {
-                    console.error('Error deleting old PDF:', err);
+                const oldPdfFile = await mongoose.connection.db.collection('uploads.files').findOne({ filename: book.pdfFile });
+                if (oldPdfFile) {
+                    await gfs.delete(oldPdfFile._id);
                 }
                 book.pdfFile = req.files.pdfFile[0].filename;
             }
@@ -354,7 +305,6 @@ router.put('/:id',
  */
 router.delete('/:id', async (req, res) => {
     try {
-        // Check delete password
         const deletePassword = req.body.deletePassword;
         if (deletePassword !== process.env.DELETE_PASSWORD) {
             req.flash('error', 'Invalid delete password. Book was not deleted.');
@@ -368,29 +318,21 @@ router.delete('/:id', async (req, res) => {
             return res.redirect('/books');
         }
 
-        // Delete associated PDF file from GridFS
-        try {
-            const pdfFile = await getGfsFiles(req, book.pdfFile);
-            if (pdfFile) {
-                await getGfs(req).delete(pdfFile._id);
-            }
-        } catch (err) {
-            console.error('Error deleting PDF from GridFS:', err);
+        const gfs = req.app.locals.gfs();
+
+        const pdfFile = await mongoose.connection.db.collection('uploads.files').findOne({ filename: book.pdfFile });
+        if (pdfFile) {
+            await gfs.delete(pdfFile._id);
         }
 
-        // Delete associated cover image from GridFS if it's not a URL
-        if (book.coverImage && !book.coverImage.startsWith('http')) {
-            try {
-                const coverFile = await getGfsFiles(req, book.coverImage);
-                if (coverFile) {
-                    await getGfs(req).delete(coverFile._id);
-                }
-            } catch (err) {
-                console.error('Error deleting cover from GridFS:', err);
+        if (book.coverImage && book.coverImage.startsWith('/files/')) {
+            const coverFilename = book.coverImage.replace('/files/', '');
+            const coverFile = await mongoose.connection.db.collection('uploads.files').findOne({ filename: coverFilename });
+            if (coverFile) {
+                await gfs.delete(coverFile._id);
             }
         }
 
-        // Delete book from database
         await Book.findByIdAndDelete(req.params.id);
 
         req.flash('success', 'Book deleted successfully!');
@@ -414,24 +356,21 @@ router.get('/:id/download', async (req, res) => {
             return res.redirect('/books');
         }
 
-        // Increment download count
         book.downloadCount += 1;
         await book.save();
 
-        // Get file from GridFS
-        const file = await getGfsFiles(req, book.pdfFile);
+        const file = await mongoose.connection.db.collection('uploads.files').findOne({ filename: book.pdfFile });
         
         if (!file) {
             req.flash('error', 'PDF file not found');
             return res.redirect(`/books/${book._id}`);
         }
 
-        // Set headers for download
-        res.set('Content-Type', file.metadata.contentType || 'application/pdf');
-        res.set('Content-Disposition', `attachment; filename="${book.title}.pdf"`);
+        const gfs = req.app.locals.gfs();
+        const readStream = gfs.openDownloadStreamByName(book.pdfFile);
         
-        // Create read stream and pipe to response
-        const readStream = getGfs(req).openDownloadStreamByName(book.pdfFile);
+        res.set('Content-Type', 'application/pdf');
+        res.set('Content-Disposition', `attachment; filename="${book.title}.pdf"`);
         readStream.pipe(res);
     } catch (err) {
         console.error('Error downloading book:', err);
